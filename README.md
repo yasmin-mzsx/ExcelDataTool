@@ -4,8 +4,6 @@
 
 当前版本：**V1.0.0**
 
-> 早期原型说明见 `README.txt`，其中“仅 UI 原型、不读写 Excel”的描述已过时，以本文件为准。
-
 ---
 
 ## 功能特性
@@ -29,11 +27,10 @@
 ## 目录结构
 
 ```text
-ExcelDataTool_UI_V1.0/
+ExcelDataTool_V1.0/
 ├─ main.py                   程序入口，创建 QApplication 与主窗口
 ├─ requirements.txt          第三方依赖清单
 ├─ ExcelDataTool.spec        PyInstaller 打包配置（单文件 exe）
-├─ 打包操作手册.md            详细打包步骤与常见问题
 ├─ assets/
 │  ├─ app.ico                程序图标
 │  └─ app.png                图标预览图
@@ -175,20 +172,6 @@ python main.py
 程序还支持可选的 `config/default_mapping.json`（默认 `{}`）：启动时先加载默认映射，再由 `app_config.json` 中的用户配置覆盖。可用于集中维护标准字段、随程序分发。
 
 配置在路径变化、保存/删除字段映射以及关闭窗口时自动写回，无需手动编辑。
-
----
-
-## 打包
-
-项目提供了 PyInstaller 配置 `ExcelDataTool.spec`，当前配置生成**单文件 exe**。在项目根目录执行：
-
-```powershell
-pyinstaller --noconfirm --clean ExcelDataTool.spec
-```
-
-产物位于 `dist/ExcelDataTool.exe`。建议分发时在 exe 同级放置 `config/` 目录（至少包含 `app_config.json`）；若不存在，程序会自动创建并使用空配置。
-
-更详细的 onedir/onefile 打包步骤、图标替换、外置配置和常见问题见 [`打包操作手册.md`](打包操作手册.md)。
 
 ---
 

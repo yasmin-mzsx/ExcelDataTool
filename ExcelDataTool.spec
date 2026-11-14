@@ -51,7 +51,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='ExcelDataTool_v1.0',
+    name='ExcelDataTool_v1.0_windows_x64',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
