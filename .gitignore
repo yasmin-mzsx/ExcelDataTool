@@ -1,0 +1,13 @@
+# PyInstaller 打包产物
+build/
+dist/
+
+# IDE
+.vscode/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 本地个人配置（每台电脑路径不同，不传）
+config/app_config.json
