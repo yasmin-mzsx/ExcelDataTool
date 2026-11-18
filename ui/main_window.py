@@ -92,7 +92,6 @@ class MainWindow(QMainWindow):
         data = {
             "last_source_dir": self.source_edit.text().strip(),
             "last_template": self.template_edit.text().strip(),
-            "last_output_dir": self.output_edit.text().strip(),
             "field_mapping": self.field_mapping,
         }
         try:
@@ -228,15 +227,6 @@ class MainWindow(QMainWindow):
         field_layout.addLayout(table_actions)
         left_layout.addWidget(field_group)
 
-        output_group = QGroupBox("4. 选择输出目录")
-        output_layout = QGridLayout(output_group)
-        self.output_edit = QLineEdit()
-        self.output_edit.setPlaceholderText("请选择统计结果保存位置")
-        self.output_browse_btn = QPushButton("浏览目录…")
-        output_layout.addWidget(self.output_edit, 0, 0)
-        output_layout.addWidget(self.output_browse_btn, 0, 1)
-        left_layout.addWidget(output_group)
-
         bottom_left = QHBoxLayout()
         self.auto_open_check = QCheckBox("处理完成后自动打开输出目录")
         self.auto_open_check.setChecked(bool(self.user_config.get("auto_open_output", False)))
@@ -324,10 +314,8 @@ class MainWindow(QMainWindow):
     def _connect_signals(self):
         self.source_browse_btn.clicked.connect(self._choose_source_dir)
         self.template_browse_btn.clicked.connect(self._choose_template)
-        self.output_browse_btn.clicked.connect(self._choose_output_dir)
         self.source_edit.textChanged.connect(self._on_source_text_changed)
         self.template_edit.textChanged.connect(self._on_any_path_changed)
-        self.output_edit.textChanged.connect(self._on_any_path_changed)
         self.file_combo.currentTextChanged.connect(self._on_file_selected)
         self.field_edit.textChanged.connect(self._update_start_button)
         self.save_mapping_btn.clicked.connect(self._save_current_mapping)
@@ -344,7 +332,6 @@ class MainWindow(QMainWindow):
     def _load_saved_paths(self):
         self.source_edit.setText(self.user_config.get("last_source_dir", ""))
         self.template_edit.setText(self.user_config.get("last_template", ""))
-        self.output_edit.setText(self.user_config.get("last_output_dir", ""))
 
     def _choose_source_dir(self):
         path = QFileDialog.getExistingDirectory(self, "选择源文件目录", self.source_edit.text())
@@ -358,11 +345,6 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.template_edit.setText(path)
-
-    def _choose_output_dir(self):
-        path = QFileDialog.getExistingDirectory(self, "选择输出目录", self.output_edit.text())
-        if path:
-            self.output_edit.setText(path)
 
     def _on_source_text_changed(self):
         self._refresh_file_list()
@@ -559,10 +541,11 @@ class MainWindow(QMainWindow):
 
         source_dir = self.source_edit.text().strip()
         template = self.template_edit.text().strip()
-        output_dir = self.output_edit.text().strip()
-        if not source_dir or not template or not output_dir:
-            QMessageBox.warning(self, "提示", "请先选好源目录、输出模板、输出目录")
+        if not source_dir or not template:
+            QMessageBox.warning(self, "提示", "请先选好源目录、输出模板")
             return
+        # 输出目录自动创建在源目录下的"已生成"子文件夹
+        output_dir = str(Path(source_dir) / "已生成")
         configured = [v for v in self.field_mapping.values() if str(v).strip()]
         if not configured:
             QMessageBox.warning(self, "提示", "至少配置一条单据的统计字段")
@@ -606,9 +589,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "完成", "全部文件处理结束，请查看日志")
             # 勾选了"处理完成后自动打开输出目录"
             if self.auto_open_check.isChecked():
-                out_dir = self.output_edit.text().strip()
-                if out_dir:
+                source_dir = self.source_edit.text().strip()
+                if source_dir:
                     import os
+                    out_dir = str(Path(source_dir) / "已生成")
                     os.startfile(out_dir)
         else:
             QMessageBox.warning(self, "结束", "任务异常或被终止，请查看日志")
@@ -618,7 +602,6 @@ class MainWindow(QMainWindow):
     def _is_valid_ready(self) -> tuple[bool, str]:
         source_text = self.source_edit.text().strip()
         template_text = self.template_edit.text().strip()
-        output_text = self.output_edit.text().strip()
 
         if not source_text:
             return False, "源文件目录未选择"
@@ -632,11 +615,6 @@ class MainWindow(QMainWindow):
         template = Path(template_text)
         if not template.is_file() or template.suffix.lower() != ".xlsx":
             return False, "输出模板不存在或不是 .xlsx 文件"
-        if not output_text:
-            return False, "输出目录未选择"
-        output = Path(output_text)
-        if not output.is_dir():
-            return False, "输出目录不存在"
 
         # 只要至少有一个单据配置了统计字段即可；未配置的文件处理时自动跳过。
         configured = [k for k, v in self.field_mapping.items() if str(v).strip()]

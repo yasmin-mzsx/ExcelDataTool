@@ -53,6 +53,9 @@ class ExcelProcessWorker(QThread):
         success_cnt = 0
         fail_cnt = 0
 
+        # 确保输出目录存在（自动创建在源目录下的"已生成"子文件夹）
+        Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+
         src = Path(self.source_dir)
         all_files = [
             p.name for p in src.iterdir()
