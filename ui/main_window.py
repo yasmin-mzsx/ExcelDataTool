@@ -53,7 +53,7 @@ def extract_doc_key(filename: str) -> str:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} v1.0.0")
+        self.setWindowTitle(f"{APP_NAME} v1.0.1")
         self.resize(1000, 600)
         self.setMinimumSize(850, 550)
 
@@ -116,7 +116,7 @@ class MainWindow(QMainWindow):
         title_box.addWidget(title)
         header.addLayout(title_box)
         header.addStretch()
-        self.version_label = QLabel("V1.0.0")
+        self.version_label = QLabel("V1.0.1")
         self.version_label.setObjectName("versionLabel")
         header.addWidget(self.version_label, alignment=Qt.AlignVCenter)
         root.addLayout(header)
@@ -229,7 +229,7 @@ class MainWindow(QMainWindow):
 
         bottom_left = QHBoxLayout()
         self.auto_open_check = QCheckBox("处理完成后自动打开输出目录")
-        self.auto_open_check.setChecked(bool(self.user_config.get("auto_open_output", False)))
+        self.auto_open_check.setChecked(bool(self.user_config.get("auto_open_output", True)))
         self.start_btn = QPushButton("▶  开始处理")
         self.start_btn.setObjectName("primaryButton")
         self.start_btn.setEnabled(False)
