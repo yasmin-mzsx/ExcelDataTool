@@ -2,35 +2,29 @@
 """
 版本与更新配置（全项目唯一版本号 / 更新渠道源头）。
 
-【发版说明】
-1. 源码调试：
-   - 默认走 github；命令行可同时带渠道与版本号，顺序不限：
-       python main.py                  # github + 兜底版本
-       python main.py gitee            # gitee + 兜底版本
-       python main.py gitee 1.1.2      # gitee + 1.1.2
-       python main.py 1.1.2 gitee      # 同上，顺序不限
-2. 打包发版（环境变量覆盖，打包那一刻写进 exe；不读命令行参数）：
-       $env:RELEASE_CHANNEL="gitee"; $env:APP_VERSION="1.1.2"
-       pyinstaller --noconfirm --clean ExcelDataTool.spec
-   - 不带环境变量时：渠道默认 github，版本号取下面的 DEFAULT_VERSION。
-3. 改完版本号后重新打包，并在对应平台 Release 上传同名 exe：
-   文件名规则见 exe_name()，即 ExcelDataTool_v1.1.2_windows_x64.exe。
+配置文件：config/app_channel.json，字段：
+  channel : "github" | "gitee"   更新渠道
+  version : "1.1" | "1.1.2"       版本号（纯数字点分段，不带 v 前缀）
+
+无论是源码运行还是打包后的 exe，都以该 JSON 为准；
+JSON 缺失或字段非法时，回落兜底：channel=github，version=DEFAULT_VERSION。
 """
 
+import json
 import os
-import re
 import sys
+from pathlib import Path
 
-# 命令行版本号格式：1.1 或 1.1.2（纯数字点分段，不带 v 前缀/后缀）
-_VERSION_RE = re.compile(r"^\d+\.\d+(?:\.\d+)?$")
-
-# ====================== 版本号兜底默认值（发版可改这里） ======================
-# 纯数字三段：主版本.次版本.修订号，不要带前缀 v
-# 打包时若设置了环境变量 APP_VERSION，以环境变量为准。
+# ====================== 版本号兜底默认值（JSON 缺失时使用） ======================
 DEFAULT_VERSION = "1.1"
 
+# 默认渠道：JSON 缺失或非法时使用
+DEFAULT_CHANNEL = "github"
+
+# 平台标识：当前只提供 Windows 64 位可执行文件
+PLATFORM_TAG = "windows_x64"
+
 # ====================== 更新渠道配置表 ======================
-# owner/repo：仓库归属与仓库名；api_template：最新 Release 接口模板。
 CHANNELS = {
     "github": {
         "owner": "yasmin-mzsx",
@@ -44,60 +38,59 @@ CHANNELS = {
     },
 }
 
-# 默认渠道：不传任何参数 / 环境变量时走这里
-DEFAULT_CHANNEL = "github"
-
-# 平台标识：当前只提供 Windows 64 位可执行文件
-PLATFORM_TAG = "windows_x64"
+# 配置文件名（位于 config/ 目录下）
+_CONFIG_DIR = "config"
+_CONFIG_FILE = "app_channel.json"
 
 
-def _parse_argv() -> tuple[str | None, str | None]:
-    """从命令行参数里识别渠道词与版本号。
+def _config_candidates() -> list[Path]:
+    """按优先级返回配置文件候选路径。
 
-    返回 (channel, version)，识别不到的项为 None。
-    渠道词：github / gitee；版本号：1.1 或 1.1.2。顺序不限，非法词忽略。
+    1. 打包后 exe 同级目录的 config/（外部可改，便携覆盖）；
+    2. PyInstaller 解压目录 _MEIPASS 内打包副本；
+    3. 源码运行时项目根目录下的 config/。
     """
-    channel: str | None = None
-    version: str | None = None
-    for arg in sys.argv[1:]:
-        candidate = arg.strip().lower()
-        if candidate in CHANNELS:
-            channel = candidate
-        elif _VERSION_RE.match(arg.strip()):
-            version = arg.strip()
-    return channel, version
+    candidates: list[Path] = []
+
+    # 1. exe 同级目录（打包后绿色便携）
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / _CONFIG_DIR / _CONFIG_FILE)
+
+    # 2. PyInstaller 解压目录内副本
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / _CONFIG_DIR / _CONFIG_FILE)
+
+    # 3. 源码项目根目录
+    candidates.append(Path(__file__).resolve().parents[1] / _CONFIG_DIR / _CONFIG_FILE)
+
+    return candidates
 
 
-def _detect_channel() -> str:
-    """解析当前更新渠道。
-
-    优先级：环境变量 RELEASE_CHANNEL > 命令行渠道词 > 默认渠道。
-    非法取值一律回落 DEFAULT_CHANNEL。
-    """
-    env_channel = os.environ.get("RELEASE_CHANNEL", "").strip().lower()
-    if env_channel in CHANNELS:
-        return env_channel
-
-    argv_channel, _ = _parse_argv()
-    return argv_channel or DEFAULT_CHANNEL
+def _load_config() -> dict:
+    """读取渠道配置 JSON；读不到或解析失败时返回空字典。"""
+    for path in _config_candidates():
+        try:
+            if path.exists():
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            continue
+    return {}
 
 
 def get_channel() -> str:
-    """返回当前生效渠道名（github / gitee）。"""
-    return _detect_channel()
+    """返回当前生效渠道名（github / gitee），非法值回落 DEFAULT_CHANNEL。"""
+    channel = str(_load_config().get("channel", "")).strip().lower()
+    return channel if channel in CHANNELS else DEFAULT_CHANNEL
 
 
 def get_app_version() -> str:
-    """返回当前版本号。
-
-    优先级：环境变量 APP_VERSION > 命令行版本号 > 代码兜底 DEFAULT_VERSION。
-    """
-    env_version = os.environ.get("APP_VERSION", "").strip()
-    if env_version:
-        return env_version
-
-    _, argv_version = _parse_argv()
-    return argv_version or DEFAULT_VERSION
+    """返回当前版本号；JSON 缺失或非法时回落 DEFAULT_VERSION。"""
+    version = str(_load_config().get("version", "")).strip()
+    return version or DEFAULT_VERSION
 
 
 def get_repo(channel: str | None = None) -> dict:

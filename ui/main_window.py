@@ -262,16 +262,25 @@ class MainWindow(QMainWindow):
         field_layout.addLayout(table_actions)
         left_layout.addWidget(field_group)
 
+        # bottom_left = QHBoxLayout()
+        # self.auto_open_check = QCheckBox("处理完成后自动打开输出目录")
+        # self.auto_open_check.setChecked(bool(self.user_config.get("auto_open_output", True)))
+        # self.start_btn = QPushButton("▶  开始处理")
+        # self.start_btn.setObjectName("primaryButton")
+        # self.start_btn.setEnabled(False)
+        # self.start_btn.setMinimumHeight(36)
+        # bottom_left.addWidget(self.auto_open_check)
+        # bottom_left.addStretch()
+        # bottom_left.addWidget(self.start_btn)
+
         bottom_left = QHBoxLayout()
-        self.auto_open_check = QCheckBox("处理完成后自动打开输出目录")
-        self.auto_open_check.setChecked(bool(self.user_config.get("auto_open_output", True)))
         self.start_btn = QPushButton("▶  开始处理")
         self.start_btn.setObjectName("primaryButton")
         self.start_btn.setEnabled(False)
         self.start_btn.setMinimumHeight(36)
-        bottom_left.addWidget(self.auto_open_check)
         bottom_left.addStretch()
         bottom_left.addWidget(self.start_btn)
+
 
         left_layout.addLayout(bottom_left)
         left_layout.addStretch()
@@ -366,7 +375,7 @@ class MainWindow(QMainWindow):
         self.check_update_btn.clicked.connect(lambda: self._start_update_check(manual=True))
         # 【BACKEND BIND】开始处理按钮 -> 后端启动槽函数
         self.start_btn.clicked.connect(self.on_start_process_clicked)
-        self.auto_open_check.stateChanged.connect(self._save_auto_open)
+        # self.auto_open_check.stateChanged.connect(self._save_auto_open)
 
     def _load_saved_paths(self):
         self.source_edit.setText(self.user_config.get("last_source_dir", ""))

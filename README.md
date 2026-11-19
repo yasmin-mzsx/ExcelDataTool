@@ -2,7 +2,7 @@
 
 基于 PySide6 的 Windows 桌面工具，用于批量读取源目录中的 Excel 单据，按单据类型提取并统计指定字段，再填入模板的对应工作表，最终为每个源文件生成一个统计后的 Excel 文件。
 
-当前版本：**V1.0.0**
+当前版本：**V1.1**（版本号以 `core/version.py` 为准）
 
 ---
 
@@ -19,7 +19,8 @@
   - 点击表格行可切换到对应文件。
 - **完整性校验**：源目录、模板、输出目录、字段配置任一不满足时，“开始处理”按钮保持禁用并显示原因。
 - **后台线程处理**：Excel 处理在 `QThread` 中执行，界面不卡顿；实时回传日志、进度、成功/失败数量。
-- **配置持久化**：源目录、模板、输出目录和字段映射自动保存到 `config/app_config.json`，绿色便携。
+- **配置持久化**：源目录、模板和字段映射自动保存到 `config/app_config.json`，绿色便携。
+- **自动更新**：启动后可检查最新 Release，比对版本号并下载新版 exe，由批处理完成替换与重启。
 - **可打包**：支持 PyInstaller 打包为单文件 exe，配置外置于 exe 同级目录。
 
 ---
@@ -27,16 +28,20 @@
 ## 目录结构
 
 ```text
-ExcelDataTool_V1.0/
+ExcelDataTool/
 ├─ main.py                   程序入口，创建 QApplication 与主窗口
 ├─ requirements.txt          第三方依赖清单
 ├─ ExcelDataTool.spec        PyInstaller 打包配置（单文件 exe）
+├─ 模板.xlsx                 输出模板文件
 ├─ assets/
 │  ├─ app.ico                程序图标
-│  └─ app.png                图标预览图
+│  ├─ app.png                图标预览图
+│  └─ icon_upgrade.svg       更新按钮图标
 ├─ config/
 │  └─ app_config.json        本机路径记录与字段映射
 ├─ core/
+│  ├─ version.py             版本号与更新渠道配置（全项目唯一版本源头）
+│  ├─ updater.py             后台检查更新、下载与一键替换重启逻辑
 │  ├─ excel_writer.py        模板填充与输出
 │  └─ process_worker.py      后台处理线程与单文件业务逻辑
 ├─ ui/
@@ -60,8 +65,8 @@ ExcelDataTool_V1.0/
 ## 安装与运行
 
 ```powershell
-# 1. 进入项目目录
-cd "C:\Users\Administrator\Desktop\ExcelDataTool_UI_V1.0"
+# 1. 进入项目根目录
+cd ExcelDataTool
 
 # 2. 安装依赖（建议先创建并激活虚拟环境）
 pip install -r requirements.txt
@@ -69,6 +74,8 @@ pip install -r requirements.txt
 # 3. 启动程序
 python main.py
 ```
+
+> 更新渠道切换、打包发版、Tag 与 Release 发布、远程仓库凭据配置等操作，详见 [发版与双仓库配置手册](./发布手册.md)。
 
 ---
 
@@ -166,7 +173,6 @@ python main.py
 |---|---|
 | `last_source_dir` | 上次选择的源文件目录 |
 | `last_template` | 上次选择的模板路径 |
-| `last_output_dir` | 上次选择的输出目录 |
 | `field_mapping` | 单据名 → 统计字段（多个字段以竖线分隔）的映射 |
 
 程序还支持可选的 `config/default_mapping.json`（默认 `{}`）：启动时先加载默认映射，再由 `app_config.json` 中的用户配置覆盖。可用于集中维护标准字段、随程序分发。
