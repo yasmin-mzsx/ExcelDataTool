@@ -1,5 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+# 【更新模块】从版本模块读取版本号，发版时只需改 core/version.py
+import sys
+sys.path.insert(0, '.')
+from core.version import APP_VERSION
+
+# 打包产物名：ExcelDataTool_v1.0.1_windows_x64.exe（版本号自动跟随 APP_VERSION）
+EXE_NAME = f'ExcelDataTool_v{APP_VERSION}_windows_x64'
+
 excludes = [
     # WebEngine 浏览器内核 / WebChannel / Pdf
     'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineQuick',
@@ -34,7 +42,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/app.ico', 'assets')],
+    datas=[('assets/app.ico', 'assets'), ('assets/icon_upgrade.svg', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -51,7 +59,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='ExcelDataTool_v1.0.1_windows_x64',
+    name=EXE_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

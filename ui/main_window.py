@@ -7,18 +7,21 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QFont, QColor, QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QGroupBox, QPlainTextEdit,
     QFileDialog, QMessageBox, QSplitter, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QCheckBox, QSizePolicy, QScrollArea, QFrame,
-    QCompleter
+    QCompleter, QDialog, QDialogButtonBox, QTextBrowser
 )
 
 # ====================== BACKEND IMPORTS START ======================
 from core.process_worker import ExcelProcessWorker
+# 【更新】更新检查/下载线程与版本常量
+from core.updater import CheckUpdateWorker, DownloadUpdateWorker, launch_update_and_exit
+from core.version import APP_VERSION
 # ====================== BACKEND IMPORTS END ======================
 
 
@@ -33,6 +36,19 @@ def app_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[1]
+
+
+def _asset_icon_path(filename: str) -> str | None:
+    """定位 assets 下的图标资源：打包后优先 _MEIPASS，其次 exe 同级 assets。"""
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "assets" / filename)
+    candidates.append(app_base_dir() / "assets" / filename)
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
 
 
 def extract_doc_key(filename: str) -> str:
@@ -53,7 +69,8 @@ def extract_doc_key(filename: str) -> str:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} v1.0.1")
+        # 【更新】标题版本号统一取自 core/version.py
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.resize(1000, 600)
         self.setMinimumSize(850, 550)
 
@@ -70,6 +87,10 @@ class MainWindow(QMainWindow):
 
         # ====================== BACKEND MEMBER START ======================
         self.process_worker: ExcelProcessWorker | None = None
+        # 【更新】更新相关线程与弹窗引用，避免被垃圾回收
+        self._check_worker: CheckUpdateWorker | None = None
+        self._download_worker: DownloadUpdateWorker | None = None
+        self._update_dialog: QDialog | None = None
         # ====================== BACKEND MEMBER END ======================
 
         self._build_ui()
@@ -77,6 +98,9 @@ class MainWindow(QMainWindow):
         self._refresh_file_list()
         self._refresh_mapping_table()
         self._update_start_button()
+
+        # 【更新】启动后后台静默检查一次更新（不弹窗打扰，有新版才提示）
+        self._auto_check_update_on_start()
 
     def load_json(self, path: Path, fallback):
         try:
@@ -116,9 +140,20 @@ class MainWindow(QMainWindow):
         title_box.addWidget(title)
         header.addLayout(title_box)
         header.addStretch()
-        self.version_label = QLabel("V1.0.1")
+        self.version_label = QLabel(f"V{APP_VERSION}")  # 【更新】版本号改为常量
         self.version_label.setObjectName("versionLabel")
         header.addWidget(self.version_label, alignment=Qt.AlignVCenter)
+        # ====== 更新功能 START：右上角"检查更新"按钮 ======
+        self.check_update_btn = QPushButton("检查更新")
+        self.check_update_btn.setObjectName("checkUpdateBtn")
+        self.check_update_btn.setMinimumHeight(28)
+        # 【更新】加载无底色蓝色升级箭头图标（打包后从 _MEIPASS/assets 取，开发态从项目 assets 取）
+        update_icon = _asset_icon_path("icon_upgrade.svg")
+        if update_icon:
+            self.check_update_btn.setIcon(QIcon(update_icon))
+            self.check_update_btn.setIconSize(QSize(18, 18))
+        header.addWidget(self.check_update_btn, alignment=Qt.AlignVCenter)
+        # ====== 更新功能 END ======
         root.addLayout(header)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -306,6 +341,7 @@ class MainWindow(QMainWindow):
             QPushButton#primaryButton:hover { background: #0F57C5; }
             QPushButton#primaryButton:disabled { background: #AABBD3; color: #F7FAFC; }
             QPushButton#navButton { border: none; background: transparent; padding: 7px 14px; color: #52657F; }
+            QPushButton#checkUpdateBtn { color: #315A91; padding: 5px 12px; }
             QHeaderView::section { background: #EDF3FA; border: none; border-bottom: 1px solid #DCE4F0; padding: 7px; font-weight: 600; }
             QProgressBar { background: #E8EEF6; border: none; border-radius: 5px; height: 12px; text-align: center; }
             QProgressBar::chunk { background: #2674E8; border-radius: 5px; }
@@ -325,6 +361,8 @@ class MainWindow(QMainWindow):
         self.locate_btn.clicked.connect(self._locate_unmatched)
         self.mapping_table.cellClicked.connect(self._on_mapping_row_clicked)
         self.clear_log_btn.clicked.connect(self.log_view.clear)
+        # 【更新】更新入口信号绑定：右上角按钮 + 菜单项共用同一个槽函数
+        self.check_update_btn.clicked.connect(lambda: self._start_update_check(manual=True))
         # 【BACKEND BIND】开始处理按钮 -> 后端启动槽函数
         self.start_btn.clicked.connect(self.on_start_process_clicked)
         self.auto_open_check.stateChanged.connect(self._save_auto_open)
@@ -527,6 +565,162 @@ class MainWindow(QMainWindow):
 
     def _save_auto_open(self):
         self.save_config()
+
+    # ====================== 更新功能 START ======================
+    # 以下方法负责：后台检查更新、更新弹窗、下载与替换重启。
+    # 与现有业务流程相互独立，检索"更新"即可定位本区块。
+
+    def _auto_check_update_on_start(self):
+        """启动时静默检查一次：manual=False，无新版不弹窗。"""
+        self._start_update_check(manual=False)
+
+    def _start_update_check(self, manual: bool):
+        """启动后台线程检查 GitHub 最新版本。
+
+        :param manual: True 表示用户主动点按钮/菜单（失败、无新版都给提示）；
+                       False 表示启动静默检查（失败/无新版只记日志）。
+        """
+        # 业务任务正在运行时不做更新检查，避免替换 exe 中断处理、占用文件
+        if self.process_worker and self.process_worker.isRunning():
+            if manual:
+                QMessageBox.information(self, "提示", "正在处理文件，请任务结束后再检查更新")
+            return
+
+        # 已有检查线程在跑时不重复发起
+        if self._check_worker and self._check_worker.isRunning():
+            return
+
+        self._check_worker = CheckUpdateWorker(self)
+        # 把 manual 标志带到回调里，由回调决定提示强度
+        self._check_worker.sig_result.connect(
+            lambda has_update, ver, notes, url, msg:
+                self._on_check_finished(has_update, ver, notes, url, msg, manual)
+        )
+        self._check_worker.start()
+
+    def _on_check_finished(self, has_update: bool, latest_version: str,
+                           notes: str, asset_url: str, message: str, manual: bool):
+        """检查线程结束回调：按是否有新版、是否手动检查决定弹窗或记日志。"""
+        if not has_update:
+            # 无新版或检查失败
+            if manual:
+                # 手动检查：给明确反馈；失败/已是最新都弹提示
+                if message.startswith("检查更新失败") or message.startswith("未获取"):
+                    QMessageBox.warning(self, "检查更新", message)
+                else:
+                    QMessageBox.information(self, "检查更新", f"当前已是最新版本 v{APP_VERSION}")
+            else:
+                # 静默检查：只在日志区留一条记录，不打扰
+                self.append_log(f"[更新] {message}")
+            return
+
+        # 有新版，但没匹配到可下载安装包
+        if not asset_url:
+            QMessageBox.information(self, "发现新版本", message)
+            return
+
+        # 有新版且有安装包：弹出更新对话框
+        self._show_update_dialog(latest_version, notes, asset_url)
+
+    def _show_update_dialog(self, latest_version: str, notes: str, asset_url: str):
+        """构建更新提示弹窗：版本号、更新日志、进度条、操作按钮。"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("发现新版本")
+        dialog.setModal(True)
+        dialog.resize(460, 340)
+        dialog.setMinimumWidth(420)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(12)
+
+        title_label = QLabel(f"发现新版本  v{latest_version}")
+        title_label.setStyleSheet("font-size: 15pt; font-weight: 700; color: #172B4D;")
+        layout.addWidget(title_label)
+
+        current_label = QLabel(f"当前版本：v{APP_VERSION}")
+        current_label.setStyleSheet("color: #718096;")
+        layout.addWidget(current_label)
+
+        layout.addWidget(QLabel("更新日志："))
+        notes_view = QTextBrowser()
+        notes_view.setReadOnly(True)
+        notes_view.setPlaceholderText("（本次发布未填写更新日志）")
+        notes_view.setPlainText(notes or "")
+        notes_view.setMaximumHeight(120)
+        layout.addWidget(notes_view, 1)
+
+        # 下载进度条（初始隐藏，点立即更新后显示）
+        self._update_progress = QProgressBar()
+        self._update_progress.setRange(0, 100)
+        self._update_progress.setValue(0)
+        self._update_progress.setVisible(False)
+        layout.addWidget(self._update_progress)
+
+        self._update_status = QLabel("")
+        self._update_status.setStyleSheet("color: #52657F;")
+        layout.addWidget(self._update_status)
+
+        # 按钮区：稍后再说 / 立即更新
+        buttons = QDialogButtonBox()
+        self._later_btn = buttons.addButton("稍后再说", QDialogButtonBox.RejectRole)
+        self._update_btn = buttons.addButton("立即更新", QDialogButtonBox.AcceptRole)
+        self._update_btn.setObjectName("primaryButton")
+        buttons.rejected.connect(dialog.reject)
+        # 点"立即更新"开始下载
+        buttons.accepted.connect(
+            lambda: self._start_download(asset_url, dialog)
+        )
+        layout.addWidget(buttons)
+
+        self._update_dialog = dialog
+        # 保存资产地址，供下载回调使用
+        self._pending_asset_url = asset_url
+        dialog.exec()
+
+    def _start_download(self, asset_url: str, dialog: QDialog):
+        """启动下载线程，进度回连弹窗进度条。"""
+        # 防止重复点击
+        self._update_btn.setEnabled(False)
+        self._later_btn.setEnabled(False)
+        self._update_progress.setVisible(True)
+        self._update_status.setText("正在下载更新包…")
+
+        self._download_worker = DownloadUpdateWorker(asset_url, self)
+        self._download_worker.sig_progress.connect(self._update_progress.setValue)
+        self._download_worker.sig_finished.connect(
+            lambda ok, path, msg: self._on_download_finished(ok, path, msg, dialog)
+        )
+        self._download_worker.start()
+
+    def _on_download_finished(self, ok: bool, new_exe_path: str,
+                              message: str, dialog: QDialog):
+        """下载完成回调：成功则准备替换重启；失败则恢复按钮并提示。"""
+        if not ok:
+            self._update_btn.setEnabled(True)
+            self._later_btn.setEnabled(True)
+            self._update_status.setText(message)
+            QMessageBox.warning(self, "更新失败", message)
+            return
+
+        self._update_status.setText("下载完成，即将重启以完成更新…")
+        # 延迟一小会儿让用户看到提示，随后退出主程序，由批处理替换并重启
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(800, lambda: self._apply_update(new_exe_path))
+
+    def _apply_update(self, new_exe_path: str):
+        """关闭弹窗并调用 updater 生成批处理、退出主程序完成替换。"""
+        # 二次防护：任务运行中不允许替换
+        if self.process_worker and self.process_worker.isRunning():
+            QMessageBox.information(self, "提示", "正在处理文件，请任务结束后再更新")
+            return
+        if self._update_dialog is not None:
+            self._update_dialog.close()
+        # 保存当前配置，避免退出时丢失业务设置
+        self.save_config()
+        launch_update_and_exit(new_exe_path)
+
+    # ====================== 更新功能 END ======================
 
     def _start_placeholder(self):
         # 已废弃，保留以防外部调用；实际开始按钮已绑定 on_start_process_clicked
