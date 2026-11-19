@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
+from core.version import get_channel
 from ui.main_window import MainWindow
 
 
@@ -21,6 +22,8 @@ def _app_icon_path() -> str | None:
 
 
 def main():
+    # 登记启动渠道：环境变量 RELEASE_CHANNEL / 命令行参数 gitee|github，默认 github
+    get_channel()
     app = QApplication(sys.argv)
     app.setApplicationName("Excel 批量数据统计工具")
     app.setOrganizationName("ExcelDataTool")

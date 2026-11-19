@@ -1,11 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-# 【更新模块】从版本模块读取版本号，发版时只需改 core/version.py
+# 【更新模块】从版本模块读取版本号与渠道。
+# 打包时可用环境变量覆盖：
+#   RELEASE_CHANNEL = github | gitee（默认 github）
+#   APP_VERSION      = 例如 1.1.2（默认取 core/version.py 兜底版本）
 import sys
 sys.path.insert(0, '.')
-from core.version import APP_VERSION
+from core.version import get_app_version, get_channel
+
+APP_VERSION = get_app_version()
+RELEASE_CHANNEL = get_channel()
 
 # 打包产物名：ExcelDataTool_v1.0.1_windows_x64.exe（版本号自动跟随 APP_VERSION）
+# 两个渠道产物同名，靠存放目录区分。
 EXE_NAME = f'ExcelDataTool_v{APP_VERSION}_windows_x64'
 
 excludes = [

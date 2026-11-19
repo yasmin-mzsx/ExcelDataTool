@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ============================================================
 # 📌【更新模块 START】
-# 自动/手动更新逻辑：检查 GitHub 最新 Release -> 比对版本 -> 下载新 exe
-# -> 生成批处理替换旧 exe 并重启。
+# 自动/手动更新逻辑：检查当前渠道（github / gitee）最新 Release
+# -> 比对版本 -> 下载新 exe -> 生成批处理替换旧 exe 并重启。
 # 本模块只做后台线程与系统操作，不操作任何 Qt 界面控件。
 # 网络请求全部使用 Python 标准库 urllib，不引入第三方依赖。
 # ============================================================
@@ -19,23 +19,26 @@ from PySide6.QtCore import QThread, Signal
 
 from core.version import (
     APP_VERSION,
-    REPO_OWNER,
-    REPO_NAME,
     PLATFORM_TAG,
     exe_name,
+    get_channel,
+    get_release_api,
 )
 
 
-# GitHub 公开接口：获取仓库最新 Release
-RELEASE_API = (
-    f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
-)
+# 按当前渠道（github / gitee）拼出最新 Release 检查接口
+RELEASE_API = get_release_api()
 
-# 请求时带一个浏览器风格 User-Agent，避免被 GitHub 拦截
-HTTP_HEADERS = {
-    "User-Agent": f"{REPO_NAME}-updater/1.0",
-    "Accept": "application/vnd.github+json",
-}
+# 请求头：github 需要带 Accept；gitee 公开仓库只带 User-Agent 即可
+if get_channel() == "github":
+    HTTP_HEADERS = {
+        "User-Agent": "ExcelDataTool-updater/1.0",
+        "Accept": "application/vnd.github+json",
+    }
+else:
+    HTTP_HEADERS = {
+        "User-Agent": "ExcelDataTool-updater/1.0",
+    }
 
 # 下载超时（秒）
 HTTP_TIMEOUT = 15
@@ -77,7 +80,7 @@ def _build_request(url: str) -> urllib.request.Request:
 
 
 class CheckUpdateWorker(QThread):
-    """后台线程：请求 GitHub 最新 Release，判断是否有新版。
+    """后台线程：请求当前渠道最新 Release，判断是否有新版。
 
     回传信号：
         sig_result(has_update: bool, latest_version: str,
