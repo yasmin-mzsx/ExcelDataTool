@@ -180,62 +180,109 @@ class DownloadUpdateWorker(QThread):
                             # 服务器没给总大小时，只回传不确定进度，避免卡死在 0
                             self.sig_progress.emit(50)
 
+            # 【完整性校验】下载结束后核对文件大小，残缺/空包不进入替换环节
+            local_size = os.path.getsize(tmp_path)
+            if local_size <= 0:
+                os.remove(tmp_path)
+                self.sig_finished.emit(False, "", "下载更新包为空文件，已中止更新")
+                return
+            if total > 0 and local_size != total:
+                os.remove(tmp_path)
+                self.sig_finished.emit(
+                    False, "", f"更新包不完整（已下载 {local_size} / 共 {total} 字节），已中止更新"
+                )
+                return
+
             self.sig_progress.emit(100)
             self.sig_finished.emit(True, tmp_path, "下载完成")
         except Exception as exc:
             self.sig_finished.emit(False, "", f"下载更新包失败：{exc}")
 
 
-def prepare_update_script(new_exe_path: str) -> str:
-    """生成替换用批处理脚本路径。
-
-    原理（onefile 单 exe 正在运行时无法覆盖自身）：
-      1. 批处理先等待旧进程退出；
-      2. 用下载好的新 exe 覆盖旧 exe；
-      3. 启动新 exe，删除临时文件。
-
-    返回生成的 .bat 文件路径，主程序退出后由系统执行它。
-    """
+def prepare_update_script(new_exe_path: str, old_pid: int | None = None) -> str:
+    """生成安全的 onefile 更新批处理脚本。"""
     old_exe = Path(sys.executable).resolve()
-    new_exe = Path(new_exe_path)
-
-    # 批处理放在临时目录，避免污染业务目录
+    new_exe = Path(new_exe_path).resolve()
+    backup_exe = old_exe.with_suffix(old_exe.suffix + ".bak")
     bat_path = Path(tempfile.gettempdir()) / "ExcelDataTool_apply_update.bat"
+    pid = int(old_pid or os.getpid())
 
-    # 注意：批处理里路径用英文双引号包裹，防止目录含空格
-    bat_content = f"""@echo off
+    bat_content = f'''@echo off
 chcp 65001 >nul
-setlocal
+setlocal EnableExtensions
+set "OLD_EXE={old_exe}"
+set "NEW_EXE={new_exe}"
+set "BACKUP_EXE={backup_exe}"
+set "OLD_PID={pid}"
+set "APP_NAME={old_exe.stem}"
 
-:: 等待旧进程退出（最多等 30 秒）
-set /a wait_count=0
-:wait_loop
-tasklist /FI "IMAGENAME eq {old_exe.name}" | find /I "{old_exe.name}" >nul
-if errorlevel 1 goto replace
-set /a wait_count+=1
-if %wait_count% GEQ 30 goto replace
+:: Wait for the exact old process to exit. Never force replacement on timeout.
+set /a WAIT_COUNT=0
+:WAIT_OLD_PROCESS
+powershell -NoProfile -Command "if (Get-Process -Id %OLD_PID% -ErrorAction SilentlyContinue) {{ exit 1 }} else {{ exit 0 }}" >nul 2>nul
+if not errorlevel 1 goto OLD_PROCESS_EXITED
+set /a WAIT_COUNT+=1
+if %WAIT_COUNT% GEQ 120 goto WAIT_FAILED
 timeout /t 1 /nobreak >nul
-goto wait_loop
+goto WAIT_OLD_PROCESS
 
-:replace
-:: 覆盖旧 exe
-copy /Y "{new_exe}" "{old_exe}" >nul
+:OLD_PROCESS_EXITED
+if exist "%BACKUP_EXE%" del /F /Q "%BACKUP_EXE%" >nul 2>nul
+copy /Y "%OLD_EXE%" "%BACKUP_EXE%" >nul
+if errorlevel 1 goto REPLACE_FAILED
+copy /Y "%NEW_EXE%" "%OLD_EXE%" >nul
+if errorlevel 1 goto ROLLBACK
 
-:: 启动新版
-start "" "{old_exe}"
+for %%A in ("%NEW_EXE%") do set "NEW_SIZE=%%~zA"
+for %%B in ("%OLD_EXE%") do set "OLD_SIZE=%%~zB"
+if not "%NEW_SIZE%"=="%OLD_SIZE%" goto ROLLBACK
+if "%OLD_SIZE%"=="0" goto ROLLBACK
 
-:: 清理临时文件
-del /F /Q "{new_exe}" >nul
-del /F /Q "{bat_path}" >nul
+:: Start the new build as a fresh PyInstaller instance.
+set "PYINSTALLER_RESET_ENVIRONMENT=1"
+start "" "%OLD_EXE%"
+
+:: Keep the backup until the new process is detected.
+set /a START_COUNT=0
+:WAIT_NEW_PROCESS
+powershell -NoProfile -Command "if (Get-Process -Name '%APP_NAME%' -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}" >nul 2>nul
+if not errorlevel 1 goto UPDATE_SUCCESS
+set /a START_COUNT+=1
+if %START_COUNT% GEQ 15 goto ROLLBACK
+timeout /t 1 /nobreak >nul
+goto WAIT_NEW_PROCESS
+
+:UPDATE_SUCCESS
+del /F /Q "%BACKUP_EXE%" >nul 2>nul
+goto CLEANUP
+
+:ROLLBACK
+if exist "%BACKUP_EXE%" (
+    copy /Y "%BACKUP_EXE%" "%OLD_EXE%" >nul
+    if not errorlevel 1 del /F /Q "%BACKUP_EXE%" >nul 2>nul
+)
+goto CLEANUP
+
+:REPLACE_FAILED
+if exist "%BACKUP_EXE%" del /F /Q "%BACKUP_EXE%" >nul 2>nul
+goto CLEANUP
+
+:WAIT_FAILED
+echo [%date% %time%] Update cancelled: old PID %OLD_PID% did not exit.>>"%TEMP%\\ExcelDataTool_update.log"
+goto CLEANUP
+
+:CLEANUP
+if exist "%NEW_EXE%" del /F /Q "%NEW_EXE%" >nul 2>nul
+if exist "%~f0" del /F /Q "%~f0" >nul 2>nul
 endlocal
-"""
+'''
     bat_path.write_text(bat_content, encoding="utf-8")
     return str(bat_path)
 
-
 def launch_update_and_exit(new_exe_path: str):
     """生成批处理并退出主程序，由批处理完成替换与重启。"""
-    bat_path = prepare_update_script(new_exe_path)
+    old_pid = os.getpid()
+    bat_path = prepare_update_script(new_exe_path, old_pid=old_pid)
     # detached 方式启动批处理，主程序随后退出
     os.startfile(bat_path)
     sys.exit(0)

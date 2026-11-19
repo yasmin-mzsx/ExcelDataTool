@@ -272,6 +272,7 @@ class MainWindow(QMainWindow):
         bottom_left.addWidget(self.auto_open_check)
         bottom_left.addStretch()
         bottom_left.addWidget(self.start_btn)
+
         left_layout.addLayout(bottom_left)
         left_layout.addStretch()
 

@@ -11,3 +11,6 @@ __pycache__/
 
 # 本地个人配置（每台电脑路径不同，不传）
 config/app_config.json
+
+# 其他
+core/updater_old.py
